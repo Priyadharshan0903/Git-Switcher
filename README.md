@@ -118,31 +118,52 @@ Either grab a prebuilt binary or build from source. Either way you'll also need 
 
 Every push of a `v*` tag builds and publishes binaries via [`.github/workflows/release.yml`](.github/workflows/release.yml). Each archive has a fixed filename with no version number in it, so GitHub's `/releases/latest/download/...` URL for a given platform **always resolves to the newest release** — bookmark it once, it never goes stale:
 
-| Platform | Download |
+| Platform | Archive |
 |---|---|
-| macOS (Apple Silicon) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-arm64.tar.gz` |
-| macOS (Intel) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-amd64.tar.gz` |
-| Linux (amd64) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-linux-amd64.tar.gz` |
-| Linux (arm64) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-linux-arm64.tar.gz` |
+| macOS (Apple Silicon) | `ghsw-darwin-arm64.tar.gz` |
+| macOS (Intel) | `ghsw-darwin-amd64.tar.gz` |
+| Linux (amd64) | `ghsw-linux-amd64.tar.gz` |
+| Linux (arm64) | `ghsw-linux-arm64.tar.gz` |
 
-Each archive contains the `ghsw` binary plus `README.md` and `LICENSE`. A [`checksums.txt`](https://github.com/<you>/ghsw/releases/latest/download/checksums.txt) with SHA-256 sums for every archive is published alongside them — verify with `sha256sum -c`.
+Download, verify the checksum, extract, and install — macOS (Apple Silicon) shown; swap the filename for your platform from the table above, and use `sha256sum -c -` instead of `shasum -a 256 -c -` on Linux:
 
 ```console
-$ curl -L https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-arm64.tar.gz | tar xz
-$ mv ghsw /usr/local/bin/   # or anywhere on your PATH
+$ curl -LO https://github.com/Priyadharshan0903/Git-Switcher/releases/latest/download/ghsw-darwin-arm64.tar.gz
+$ curl -LO https://github.com/Priyadharshan0903/Git-Switcher/releases/latest/download/checksums.txt
+$ grep darwin-arm64 checksums.txt | shasum -a 256 -c -
+ghsw-darwin-arm64.tar.gz: OK
+
+$ tar xzf ghsw-darwin-arm64.tar.gz
+$ sudo mv ghsw /usr/local/bin/   # or anywhere on your PATH
 ```
 
-(Swap in the archive for your platform from the table above.)
+Each archive also contains `README.md` and `LICENSE` alongside the binary. Confirm it's on your `PATH`:
+
+```console
+$ ghsw
+ghsw - manage multiple GitHub identities
+
+Usage:
+  ghsw add <name> --key <ssh-key> --dir <git-folder> --name <git-name> --email <git-email> --gh-user <github-username>
+  ghsw use <name>
+  ghsw list
+  ghsw status
+  ghsw remove <name> [--purge]
+
+See README.md for the full command reference.
+```
+
+From here, see [Example](#example) above to register your first two accounts and switch between them, or the full [Command reference](#command-reference) below.
 
 ### Build from source
 
 Requires Go 1.21+.
 
 ```console
-$ git clone https://github.com/<you>/ghsw.git
-$ cd ghsw
+$ git clone https://github.com/Priyadharshan0903/Git-Switcher.git
+$ cd Git-Switcher
 $ go build -o ghsw ./cmd/ghsw
-$ mv ghsw /usr/local/bin/   # or anywhere on your PATH
+$ sudo mv ghsw /usr/local/bin/   # or anywhere on your PATH
 ```
 
 No `go mod download` step — the module has zero external dependencies.
