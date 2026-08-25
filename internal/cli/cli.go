@@ -29,6 +29,7 @@ func Execute() {
 	args := os.Args[2:]
 
 	switch cmd {
+
 	case "add":
 		err = cmdAdd(home, args)
 	case "use":
