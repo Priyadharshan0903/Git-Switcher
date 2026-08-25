@@ -14,13 +14,40 @@ Switch between multiple GitHub identities (work, personal, client, ...) on one m
 
 `ghsw add` registers an identity and wires up the directory-scoped/explicit-alias overrides; `ghsw use` flips the **machine-wide default** — `gh` account, global git identity, and default SSH key — in one command; `ghsw list`/`ghsw status` tell you what's configured and what's currently active.
 
+```mermaid
+flowchart LR
+    U["ghsw use &lt;name&gt;"] --> A["gh auth switch\n--hostname github.com --user &lt;gh_username&gt;"]
+    U --> B["git config --global\nuser.name / user.email"]
+    U --> C["repoint ~/.ssh/ghsw_current_key\n(symlink) → account's SSH key"]
+
+    A --> A1["gh CLI + git's credential helper\nnow act as this account"]
+    B --> B1["Any repo with no closer override\nnow commits as this identity"]
+    C --> C1["Plain git@github.com remotes\nnow authenticate with this key"]
+```
+
 ### How identity resolves, in order
 
-1. A repo's own local `git config user.email` (if set) always wins.
-2. A directory registered with `--dir` (via `includeIf`) wins next, regardless of the machine-wide switch.
-3. Otherwise, whatever `ghsw use` last set globally applies.
+**Git identity** (`user.name`/`user.email`) for a commit:
 
-SSH key resolution: an explicit `github-<name>` remote alias always uses that account's key; a plain `git@github.com` remote uses whichever key `ghsw use` last activated.
+```mermaid
+flowchart TD
+    Start(["git needs an identity for a commit"]) --> Q1{"Local repo config set?\n(git config user.email)"}
+    Q1 -- yes --> R1["use the repo's local config\nghsw never touches this"]
+    Q1 -- no --> Q2{"Repo path is under a\nregistered --dir?"}
+    Q2 -- yes --> R2["use that account's includeIf'd identity\n(~/.gitconfig-&lt;name&gt;)"]
+    Q2 -- no --> R3["use the global identity\nset by the last ghsw use"]
+```
+
+**SSH key** for a `github.com` connection:
+
+```mermaid
+flowchart TD
+    Start(["git/ssh connects to a github.com remote"]) --> Q1{"remote uses an explicit alias?\ngit@github-&lt;name&gt;:..."}
+    Q1 -- yes --> R1["always that account's key\n(Host github-&lt;name&gt; block)"]
+    Q1 -- "no, plain git@github.com" --> R2["~/.ssh/ghsw_current_key\n→ whichever key the last ghsw use activated"]
+```
+
+In short: **local repo config beats `--dir` scoping beats the machine-wide default** for identity, and **an explicit alias beats the machine-wide default** for SSH keys.
 
 ## What it doesn't do
 
@@ -85,7 +112,31 @@ work      ada-work     ada@work-co.com       /home/ada/code/work
 
 ## Install
 
-Requires Go 1.21+, and the [`gh` CLI](https://cli.github.com/) on your `PATH` (used by `ghsw use`/`ghsw list`/`ghsw status`).
+Either grab a prebuilt binary or build from source. Either way you'll also need the [`gh` CLI](https://cli.github.com/) on your `PATH` (used by `ghsw use`/`ghsw list`/`ghsw status`).
+
+### Download a prebuilt binary
+
+Every push of a `v*` tag builds and publishes binaries via [`.github/workflows/release.yml`](.github/workflows/release.yml). Each archive has a fixed filename with no version number in it, so GitHub's `/releases/latest/download/...` URL for a given platform **always resolves to the newest release** — bookmark it once, it never goes stale:
+
+| Platform | Download |
+|---|---|
+| macOS (Apple Silicon) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-arm64.tar.gz` |
+| macOS (Intel) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-amd64.tar.gz` |
+| Linux (amd64) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-linux-amd64.tar.gz` |
+| Linux (arm64) | `https://github.com/<you>/ghsw/releases/latest/download/ghsw-linux-arm64.tar.gz` |
+
+Each archive contains the `ghsw` binary plus `README.md` and `LICENSE`. A [`checksums.txt`](https://github.com/<you>/ghsw/releases/latest/download/checksums.txt) with SHA-256 sums for every archive is published alongside them — verify with `sha256sum -c`.
+
+```console
+$ curl -L https://github.com/<you>/ghsw/releases/latest/download/ghsw-darwin-arm64.tar.gz | tar xz
+$ mv ghsw /usr/local/bin/   # or anywhere on your PATH
+```
+
+(Swap in the archive for your platform from the table above.)
+
+### Build from source
+
+Requires Go 1.21+.
 
 ```console
 $ git clone https://github.com/<you>/ghsw.git
@@ -169,15 +220,18 @@ $ go test ./...
 
 ### Project layout
 
+```mermaid
+flowchart TD
+    main["cmd/ghsw\nmain()"] --> cli["internal/cli\nadd · use · list · status · remove"]
+    cli --> account["internal/account\naccounts.json registry"]
+    cli --> ghauth["internal/ghauth\ngh auth switch/status + output parsing"]
+    cli --> gitconfig["internal/gitconfig\n~/.gitconfig identity + includeIf"]
+    cli --> sshconfig["internal/sshconfig\n~/.ssh/config host blocks + active-key symlink"]
+    cli --> fsutil["internal/fsutil\nshared file helpers"]
+    sshconfig --> fsutil
 ```
-cmd/ghsw/            thin main() — delegates straight to internal/cli
-internal/cli/         command implementations: add.go, use.go, list.go, status.go, remove.go
-internal/account/     accounts.json registry (load/save)
-internal/ghauth/       gh auth switch/status wrapper + output parsing
-internal/gitconfig/    ~/.gitconfig identity + includeIf block management
-internal/sshconfig/    ~/.ssh/config host blocks + active-key symlink
-internal/fsutil/       small shared file helpers
-```
+
+`cmd/ghsw` is a thin `main()` that delegates straight to `internal/cli`, which composes the rest. `internal/fsutil` is the one shared leaf — both `internal/cli` and `internal/sshconfig` read files through it; `internal/account`, `internal/ghauth`, and `internal/gitconfig` depend on nothing but the standard library.
 
 Shell-outs to `gh` and `git` (in `internal/ghauth` and `internal/gitconfig`) aren't unit-tested — they require a real, authenticated `gh` CLI and aren't reproducible in CI. Everything else (SSH config block parsing/writing, gitconfig `includeIf` block parsing/writing, accounts.json load/save, and `gh auth status` output parsing) has table-driven tests, one file per package.
 
