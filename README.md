@@ -144,7 +144,7 @@ $ ghsw
 ghsw - manage multiple GitHub identities
 
 Usage:
-  ghsw add <name> --key <ssh-key> --dir <git-folder> --name <git-name> --email <git-email> --gh-user <github-username>
+  ghsw add <name> --key <ssh-key> --dir <git-folder> --name <git-name> --email <git-email> --gh-user <github-username> [--host <github-host>]
   ghsw use <name>
   ghsw list
   ghsw status
@@ -170,7 +170,7 @@ No `go mod download` step — the module has zero external dependencies.
 
 ## Command reference
 
-### `ghsw add <name> --key <path> [--dir <path>] --name <name> --email <email> --gh-user <username>`
+### `ghsw add <name> --key <path> [--dir <path>] --name <name> --email <email> --gh-user <username> [--host <hostname>]`
 
 Registers a new identity:
 
@@ -178,8 +178,9 @@ Registers a new identity:
 - `--dir` — optional. A git working directory (e.g. `~/code/work`) that should always use this identity via git's `includeIf`, even when a different account is active machine-wide. Skip it if you just want plain `ghsw use <name>` switching with no folder pinning.
 - `--name` / `--email` — this identity's `user.name`/`user.email`.
 - `--gh-user` — the GitHub username `gh auth switch` should activate for this identity.
+- `--host` — optional, defaults to `github.com`. The GitHub host this identity lives on, e.g. a self-hosted GitHub Enterprise Server instance (`--host ghe.example.com`). A scheme or trailing slash (`https://ghe.example.com/`) is stripped. See [GitHub Enterprise Server](#github-enterprise-server).
 
-Also always creates a `Host github-<name>` SSH alias, usable as an explicit override (`git@github-<name>:...`) regardless of which account is active.
+Also always creates a `Host github-<name>` SSH alias (pointing at the account's host), usable as an explicit override (`git@github-<name>:...`) regardless of which account is active.
 
 Running `add` again for the same name updates the registry entry and is safe to re-run — existing SSH host blocks and `includeIf` blocks are detected and left alone rather than duplicated.
 
@@ -189,15 +190,15 @@ Does **not** run `gh auth login`. If the identity isn't authenticated with `gh` 
 
 Switches the active account **machine-wide**, in one command:
 
-1. `gh auth switch --hostname github.com --user <gh_username>`.
+1. `gh auth switch --hostname <host> --user <gh_username>`, where `<host>` is the account's host (`github.com` unless it was added with `--host`).
 2. `git config --global user.name/user.email`, so any repo without a more specific local or `includeIf` override picks up this identity.
-3. Repoints `~/.ssh/ghsw_current_key` (a symlink `ghsw` manages) to this account's key, so plain `git@github.com:...` remotes use the right key.
+3. Repoints the active-key symlink for that host to this account's key, so plain `git@<host>:...` remotes use the right key. For `github.com` that's `~/.ssh/ghsw_current_key`; other hosts get `~/.ssh/ghsw_current_key-<host>`.
 
 Errors with a hint to run `ghsw list` if the name isn't registered. If one of the three steps fails (most commonly: `gh auth switch` because the account isn't authenticated yet), the others still apply and the failure is reported — it's not all-or-nothing.
 
 ### `ghsw list`
 
-Prints a table of every registered account (name, GitHub username, git email, git directory), and cross-references `gh auth status` to mark the currently active one with `*`.
+Prints a table of every registered account (name, host, GitHub username, git email, git directory), and cross-references `gh auth status` to mark the currently active one on each host with `*`. `gh` keeps one active account per host, so with accounts on several hosts more than one row can be marked.
 
 ### `ghsw status`
 
@@ -207,7 +208,7 @@ Prints raw `gh auth status` output, then reports which registered account (if an
 
 Removes the account from `~/.ghsw/accounts.json`. By default, the SSH config block, the `includeIf` block, and the `~/.gitconfig-<name>` file are left untouched (other tools or repos may still reference them). Pass `--purge` to clean those up too.
 
-Note: this only removes the account's own `Host github-<name>` alias. The shared managed `Host github.com` block and the `~/.ssh/ghsw_current_key` symlink are left alone either way — they belong to whichever account is currently active, not to any one registered account.
+Note: this only removes the account's own `Host github-<name>` alias. The shared managed `Host <host>` block and that host's active-key symlink are left alone either way — they belong to whichever account is currently active, not to any one registered account.
 
 ## Data model
 
@@ -229,6 +230,29 @@ Everything is tracked in `~/.ghsw/accounts.json`:
 ```
 
 `git_dir` is `""` for accounts registered without `--dir` — they rely purely on machine-wide switching via `ghsw use`.
+
+Accounts added with `--host` also store a `"hostname"` field (e.g. `"hostname": "ghe.example.com"`). It's omitted for `github.com` accounts, and a missing `hostname` means `github.com`, so registries written by older versions of `ghsw` keep working unchanged.
+
+## GitHub Enterprise Server
+
+`ghsw` works with self-hosted GitHub Enterprise Server alongside (or instead of) `github.com`. Pass the instance's hostname to `add`:
+
+```console
+$ ghsw add corp \
+    --host ghe.example.com \
+    --key ~/.ssh/id_ed25519_corp \
+    --name "Ada Lovelace" \
+    --email ada@example.com \
+    --gh-user ada
+$ gh auth login --hostname ghe.example.com
+$ ghsw use corp
+```
+
+Each host is switched independently: `ghsw use corp` repoints `gh` and the SSH key for `ghe.example.com` only, and leaves whichever account is active on `github.com` alone (and vice versa). Each host gets its own managed `Host <host>` block in `~/.ssh/config` and its own active-key symlink.
+
+The one exception is the global git identity (`user.name`/`user.email`), which git has only one of: `ghsw use` always sets it to the account you switched to. Use `--dir` to pin an identity to a folder if you work on both hosts at once.
+
+Accounts registered without `--host` behave exactly as before.
 
 ## Development
 

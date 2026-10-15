@@ -1,8 +1,10 @@
 package account
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +88,78 @@ func TestDefaultPath(t *testing.T) {
 	want := filepath.Join("/home/user", ".ghsw", "accounts.json")
 	if got != want {
 		t.Fatalf("DefaultPath: got %q, want %q", got, want)
+	}
+}
+
+func TestHostDefaultsToGitHubCom(t *testing.T) {
+	if got := (Account{}).Host(); got != DefaultHostname {
+		t.Errorf("Host() with empty Hostname = %q, want %q", got, DefaultHostname)
+	}
+	if got := (Account{Hostname: "ghe.corp.com"}).Host(); got != "ghe.corp.com" {
+		t.Errorf("Host() = %q, want %q", got, "ghe.corp.com")
+	}
+}
+
+func TestLoadLegacyRegistryWithoutHostname(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "accounts.json")
+	legacy := `{"accounts":{"work":{"ssh_alias":"github-work","ssh_key":"/k","git_dir":"","git_name":"N","git_email":"e@x","gh_username":"h"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := reg.Accounts["work"].Host(); got != DefaultHostname {
+		t.Errorf("legacy account Host() = %q, want %q", got, DefaultHostname)
+	}
+}
+
+func TestSaveOmitsHostnameForGitHubCom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "accounts.json")
+	reg := &Registry{Accounts: map[string]Account{
+		"personal": {SSHAlias: "github-personal"},
+		"work":     {SSHAlias: "github-work", Hostname: "ghe.corp.com"},
+	}}
+	if err := reg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"hostname"`); n != 1 {
+		t.Fatalf("expected exactly one hostname field (enterprise account only), got %d:\n%s", n, data)
+	}
+}
+
+func TestNormalizeHost(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"github.com", "github.com", false},
+		{"GHE.Corp.com", "ghe.corp.com", false},
+		{"https://ghe.corp.com/", "ghe.corp.com", false},
+		{"  http://ghe.corp.com  ", "ghe.corp.com", false},
+		{"", "", true},
+		{"https://", "", true},
+		{"ghe.corp.com/org", "", true},
+		{"ghe.corp.com:2222", "", true},
+		{"git@ghe.corp.com", "", true},
+		{"ghe corp.com", "", true},
+	}
+	for _, tt := range tests {
+		got, err := NormalizeHost(tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("NormalizeHost(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
