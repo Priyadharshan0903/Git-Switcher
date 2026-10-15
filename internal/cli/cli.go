@@ -7,10 +7,7 @@ import (
 	"os"
 )
 
-const (
-	sshHostPrefix   = "github-"
-	defaultHostname = "github.com"
-)
+const sshHostPrefix = "github-"
 
 // Execute runs ghsw against os.Args, exiting the process on error.
 func Execute() {
@@ -58,7 +55,7 @@ func printUsage() {
 	fmt.Fprint(os.Stderr, `ghsw - manage multiple GitHub identities
 
 Usage:
-  ghsw add <name> --key <ssh-key> --dir <git-folder> --name <git-name> --email <git-email> --gh-user <github-username>
+  ghsw add <name> --key <ssh-key> --dir <git-folder> --name <git-name> --email <git-email> --gh-user <github-username> [--host <github-host>]
   ghsw use <name>
   ghsw list
   ghsw status

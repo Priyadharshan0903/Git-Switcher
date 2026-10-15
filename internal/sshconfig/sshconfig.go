@@ -1,6 +1,7 @@
 // Package sshconfig manages the SSH host aliases and the managed default
-// Host github.com block ghsw writes to ~/.ssh/config, plus the symlink
-// indirection used to switch which key answers for plain git@github.com
+// Host blocks (one per GitHub host, e.g. github.com or a GitHub Enterprise
+// Server instance) ghsw writes to ~/.ssh/config, plus the symlink
+// indirection used to switch which key answers for plain git@<host>
 // remotes.
 package sshconfig
 
@@ -15,21 +16,27 @@ import (
 )
 
 const (
-	// DefaultHost is the plain GitHub host that unaliased remotes
-	// (git@github.com:...) resolve against.
+	// DefaultHost is the public GitHub host. Its active-key symlink keeps
+	// the original, unsuffixed path so existing setups keep working.
 	DefaultHost = "github.com"
-	// managedDefaultMarker tags the Host block ghsw owns so it can be
+	// managedDefaultMarker tags each Host block ghsw owns so it can be
 	// recognized (and left alone) on future runs, and distinguished from
-	// any Host github.com block the user wrote by hand.
+	// any Host <host> block the user wrote by hand.
 	managedDefaultMarker = "# managed by ghsw — run `ghsw use <name>` to change; do not hand-edit IdentityFile below"
 )
 
-// ActiveKeyLinkPath is the stable path the managed default Host block points
-// at. `ghsw use` repoints this symlink to the active account's key, so plain
-// git@github.com remotes follow whichever account is currently active
-// machine-wide.
-func ActiveKeyLinkPath(home string) string {
-	return filepath.Join(home, ".ssh", "ghsw_current_key")
+// ActiveKeyLinkPath is the stable path the managed default Host block for
+// host points at. `ghsw use` repoints this symlink to the active account's
+// key, so plain git@<host> remotes follow whichever account is currently
+// active on that host. github.com uses ~/.ssh/ghsw_current_key; any other
+// host gets ~/.ssh/ghsw_current_key-<host>, so each host switches
+// independently.
+func ActiveKeyLinkPath(home, host string) string {
+	name := "ghsw_current_key"
+	if host != DefaultHost {
+		name += "-" + host
+	}
+	return filepath.Join(home, ".ssh", name)
 }
 
 // hostBlock renders a Host block for ~/.ssh/config.
@@ -118,29 +125,29 @@ func RemoveHost(path, alias string) error {
 }
 
 // hasManagedDefaultHost reports whether content already has ghsw's managed
-// "Host github.com" block (identified by managedDefaultMarker on the line
+// "Host <host>" block (identified by managedDefaultMarker on the line
 // immediately above it).
-func hasManagedDefaultHost(content string) bool {
+func hasManagedDefaultHost(content, host string) bool {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		if strings.TrimSpace(line) != managedDefaultMarker {
 			continue
 		}
-		if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "Host "+DefaultHost {
+		if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "Host "+host {
 			return true
 		}
 	}
 	return false
 }
 
-// hasForeignDefaultHost reports whether content has a "Host github.com"
-// block that ghsw does not manage. SSH resolves each setting to the first
+// hasForeignDefaultHost reports whether content has a "Host <host>" block
+// that ghsw does not manage. SSH resolves each setting to the first
 // matching block that defines it, so an earlier foreign block can silently
 // shadow ghsw's IdentityFile.
-func hasForeignDefaultHost(content string) bool {
+func hasForeignDefaultHost(content, host string) bool {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		if strings.TrimSpace(line) != "Host "+DefaultHost {
+		if strings.TrimSpace(line) != "Host "+host {
 			continue
 		}
 		managed := i > 0 && strings.TrimSpace(lines[i-1]) == managedDefaultMarker
@@ -151,18 +158,18 @@ func hasForeignDefaultHost(content string) bool {
 	return false
 }
 
-// ensureManagedDefaultHost prepends ghsw's managed "Host github.com" block
+// ensureManagedDefaultHost prepends ghsw's managed "Host <host>" block
 // (IdentityFile pointing at symlinkPath) to content, unless it is already
 // present. It is prepended rather than appended so its settings win SSH's
 // first-match-per-keyword resolution ahead of any later, unrelated Host
-// github.com block.
-func ensureManagedDefaultHost(content, symlinkPath string) (newContent string, added bool) {
-	if hasManagedDefaultHost(content) {
+// <host> block.
+func ensureManagedDefaultHost(content, host, symlinkPath string) (newContent string, added bool) {
+	if hasManagedDefaultHost(content, host) {
 		return content, false
 	}
 	block := managedDefaultMarker + "\n" +
-		"Host " + DefaultHost + "\n" +
-		"  HostName " + DefaultHost + "\n" +
+		"Host " + host + "\n" +
+		"  HostName " + host + "\n" +
 		"  User git\n" +
 		"  IdentityFile " + symlinkPath + "\n" +
 		"  IdentitiesOnly yes\n"
@@ -173,16 +180,16 @@ func ensureManagedDefaultHost(content, symlinkPath string) (newContent string, a
 }
 
 // EnsureManagedDefaultHost idempotently ensures ~/.ssh/config has ghsw's
-// managed default Host block, and reports whether a foreign (user-authored)
-// Host github.com block was also found, so the caller can warn about a
-// possible conflict.
-func EnsureManagedDefaultHost(path, symlinkPath string) (addedBlock, foreignBlock bool, err error) {
+// managed default Host block for host, and reports whether a foreign
+// (user-authored) Host <host> block was also found, so the caller can warn
+// about a possible conflict.
+func EnsureManagedDefaultHost(path, host, symlinkPath string) (addedBlock, foreignBlock bool, err error) {
 	content, err := fsutil.ReadOrEmpty(path)
 	if err != nil {
 		return false, false, err
 	}
-	foreignBlock = hasForeignDefaultHost(content)
-	newContent, added := ensureManagedDefaultHost(content, symlinkPath)
+	foreignBlock = hasForeignDefaultHost(content, host)
+	newContent, added := ensureManagedDefaultHost(content, host, symlinkPath)
 	if !added {
 		return false, foreignBlock, nil
 	}

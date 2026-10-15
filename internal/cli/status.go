@@ -38,7 +38,7 @@ func cmdStatus(home string, _ []string) error {
 	}
 	for name, a := range reg.Accounts {
 		if a.GitEmail == email {
-			fmt.Printf("\ncurrent directory (%s) maps to registered account %q via git user.email %s\n", cwd, name, email)
+			fmt.Printf("\ncurrent directory (%s) maps to registered account %q (%s) via git user.email %s\n", cwd, name, a.Host(), email)
 			return nil
 		}
 	}

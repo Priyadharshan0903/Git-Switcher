@@ -14,7 +14,7 @@ import (
 
 func cmdAdd(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("add requires an account name, e.g. ghsw add work --key ... --dir ... --name ... --email ... --gh-user ...")
+		return fmt.Errorf("add requires an account name, e.g. ghsw add work --key ... --dir ... --name ... --email ... --gh-user ... [--host ...]")
 	}
 	name := args[0]
 
@@ -24,6 +24,7 @@ func cmdAdd(home string, args []string) error {
 	gitName := fs.String("name", "", "git user.name")
 	gitEmail := fs.String("email", "", "git user.email")
 	ghUser := fs.String("gh-user", "", "GitHub username")
+	host := fs.String("host", account.DefaultHostname, "optional: GitHub host this identity lives on, e.g. a GitHub Enterprise Server hostname")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -31,7 +32,11 @@ func cmdAdd(home string, args []string) error {
 		return fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
 	if *key == "" || *gitName == "" || *gitEmail == "" || *ghUser == "" {
-		return fmt.Errorf("add requires --key, --name, --email, and --gh-user (--dir is optional)")
+		return fmt.Errorf("add requires --key, --name, --email, and --gh-user (--dir and --host are optional)")
+	}
+	hostname, err := account.NormalizeHost(*host)
+	if err != nil {
+		return fmt.Errorf("--host: %w", err)
 	}
 
 	absKey, err := filepath.Abs(*key)
@@ -48,7 +53,7 @@ func cmdAdd(home string, args []string) error {
 
 	alias := sshHostPrefix + name
 	sshConfigPath := filepath.Join(home, ".ssh", "config")
-	added, err := sshconfig.AddHost(sshConfigPath, alias, defaultHostname, "git", absKey)
+	added, err := sshconfig.AddHost(sshConfigPath, alias, hostname, "git", absKey)
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", sshConfigPath, err)
 	}
@@ -86,7 +91,7 @@ func cmdAdd(home string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading account registry: %w", err)
 	}
-	reg.Accounts[name] = account.Account{
+	acc := account.Account{
 		SSHAlias:   alias,
 		SSHKey:     absKey,
 		GitDir:     absDir,
@@ -94,13 +99,17 @@ func cmdAdd(home string, args []string) error {
 		GitEmail:   *gitEmail,
 		GHUsername: *ghUser,
 	}
+	if hostname != account.DefaultHostname {
+		acc.Hostname = hostname
+	}
+	reg.Accounts[name] = acc
 	if err := reg.Save(registryPath); err != nil {
 		return fmt.Errorf("saving account registry: %w", err)
 	}
 
 	fmt.Printf("\nregistered account %q\n", name)
 	fmt.Println("this tool does not run `gh auth login` for you — if this identity")
-	fmt.Printf("isn't authenticated yet, run:\n  gh auth login --hostname %s\n", defaultHostname)
+	fmt.Printf("isn't authenticated yet, run:\n  gh auth login --hostname %s\n", hostname)
 	fmt.Printf("then switch to it machine-wide any time with:\n  ghsw use %s\n", name)
 	return nil
 }

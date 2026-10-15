@@ -156,7 +156,7 @@ func TestHasManagedDefaultHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hasManagedDefaultHost(tt.content); got != tt.want {
+			if got := hasManagedDefaultHost(tt.content, DefaultHost); got != tt.want {
 				t.Errorf("hasManagedDefaultHost(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
@@ -177,7 +177,7 @@ func TestHasForeignDefaultHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hasForeignDefaultHost(tt.content); got != tt.want {
+			if got := hasForeignDefaultHost(tt.content, DefaultHost); got != tt.want {
 				t.Errorf("hasForeignDefaultHost(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
@@ -195,11 +195,11 @@ func TestEnsureManagedDefaultHostContent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, added := ensureManagedDefaultHost(tt.content, "/home/user/.ssh/ghsw_current_key")
+			result, added := ensureManagedDefaultHost(tt.content, DefaultHost, "/home/user/.ssh/ghsw_current_key")
 			if !added {
 				t.Fatalf("expected added=true when no managed block exists yet")
 			}
-			if !hasManagedDefaultHost(result) {
+			if !hasManagedDefaultHost(result, DefaultHost) {
 				t.Fatalf("expected managed default host to be present after ensure, got:\n%s", result)
 			}
 			for _, want := range []string{"Host github.com", "IdentityFile /home/user/.ssh/ghsw_current_key", "IdentitiesOnly yes"} {
@@ -218,11 +218,11 @@ func TestEnsureManagedDefaultHostContent(t *testing.T) {
 }
 
 func TestEnsureManagedDefaultHostContentIsIdempotent(t *testing.T) {
-	content, added := ensureManagedDefaultHost("", "/link")
+	content, added := ensureManagedDefaultHost("", DefaultHost, "/link")
 	if !added {
 		t.Fatalf("expected added=true on first call")
 	}
-	again, added := ensureManagedDefaultHost(content, "/link")
+	again, added := ensureManagedDefaultHost(content, DefaultHost, "/link")
 	if added {
 		t.Fatalf("expected added=false once a managed block already exists")
 	}
@@ -235,7 +235,7 @@ func TestEnsureManagedDefaultHostFileIO(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
 
-	added, foreign, err := EnsureManagedDefaultHost(path, "/link")
+	added, foreign, err := EnsureManagedDefaultHost(path, DefaultHost, "/link")
 	if err != nil {
 		t.Fatalf("EnsureManagedDefaultHost: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestEnsureManagedDefaultHostFileIO(t *testing.T) {
 		t.Fatalf("expected added=true, foreign=false on a fresh file, got added=%v foreign=%v", added, foreign)
 	}
 
-	added, foreign, err = EnsureManagedDefaultHost(path, "/link")
+	added, foreign, err = EnsureManagedDefaultHost(path, DefaultHost, "/link")
 	if err != nil {
 		t.Fatalf("EnsureManagedDefaultHost (second call): %v", err)
 	}
@@ -259,7 +259,7 @@ func TestEnsureManagedDefaultHostDetectsForeignBlock(t *testing.T) {
 		t.Fatalf("seeding config: %v", err)
 	}
 
-	added, foreign, err := EnsureManagedDefaultHost(path, "/link")
+	added, foreign, err := EnsureManagedDefaultHost(path, DefaultHost, "/link")
 	if err != nil {
 		t.Fatalf("EnsureManagedDefaultHost: %v", err)
 	}
@@ -303,5 +303,58 @@ func TestSetActiveKey(t *testing.T) {
 	}
 	if string(data) != "key-b-contents" {
 		t.Fatalf("expected linkPath to resolve to keyB's contents after re-switching, got %q", data)
+	}
+}
+
+func TestActiveKeyLinkPath(t *testing.T) {
+	home := filepath.Join("home", "user")
+	if got, want := ActiveKeyLinkPath(home, DefaultHost), filepath.Join(home, ".ssh", "ghsw_current_key"); got != want {
+		t.Errorf("ActiveKeyLinkPath(github.com) = %q, want %q (must stay unchanged for existing setups)", got, want)
+	}
+	if got, want := ActiveKeyLinkPath(home, "ghe.corp.com"), filepath.Join(home, ".ssh", "ghsw_current_key-ghe.corp.com"); got != want {
+		t.Errorf("ActiveKeyLinkPath(ghe.corp.com) = %q, want %q", got, want)
+	}
+}
+
+func TestManagedDefaultHostsArePerHost(t *testing.T) {
+	content, added := ensureManagedDefaultHost("", DefaultHost, "/link")
+	if !added {
+		t.Fatal("expected github.com block to be added")
+	}
+	if hasManagedDefaultHost(content, "ghe.corp.com") {
+		t.Fatal("github.com block must not count as managed for another host")
+	}
+
+	content, added = ensureManagedDefaultHost(content, "ghe.corp.com", "/link-ghe")
+	if !added {
+		t.Fatal("expected ghe.corp.com block to be added alongside github.com")
+	}
+	for _, host := range []string{DefaultHost, "ghe.corp.com"} {
+		if !hasManagedDefaultHost(content, host) {
+			t.Errorf("expected managed block for %s, got:\n%s", host, content)
+		}
+		if hasForeignDefaultHost(content, host) {
+			t.Errorf("did not expect foreign block for %s, got:\n%s", host, content)
+		}
+	}
+	for _, want := range []string{"Host ghe.corp.com\n  HostName ghe.corp.com", "IdentityFile /link-ghe", "IdentityFile /link\n"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected %q in:\n%s", want, content)
+		}
+	}
+
+	again, added := ensureManagedDefaultHost(content, "ghe.corp.com", "/link-ghe")
+	if added || again != content {
+		t.Fatal("expected second ensure for ghe.corp.com to be a no-op")
+	}
+}
+
+func TestForeignDefaultHostIsPerHost(t *testing.T) {
+	content := "Host ghe.corp.com\n  IdentityFile /manual\n"
+	if !hasForeignDefaultHost(content, "ghe.corp.com") {
+		t.Error("expected foreign block for ghe.corp.com")
+	}
+	if hasForeignDefaultHost(content, DefaultHost) {
+		t.Error("a ghe.corp.com block must not be reported as foreign for github.com")
 	}
 }

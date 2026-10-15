@@ -20,8 +20,17 @@ func cmdList(home string, _ []string) error {
 		return nil
 	}
 
+	// gh tracks one active account per host, so resolve each host
+	// separately and match on (host, username): the same handle can exist
+	// on both github.com and a GitHub Enterprise instance.
 	statusOut, _ := ghauth.Status()
-	activeUser := ghauth.ActiveUsername(statusOut, defaultHostname)
+	activeByHost := map[string]string{}
+	for _, a := range reg.Accounts {
+		h := a.Host()
+		if _, done := activeByHost[h]; !done {
+			activeByHost[h] = ghauth.ActiveUsername(statusOut, h)
+		}
+	}
 
 	names := make([]string, 0, len(reg.Accounts))
 	for n := range reg.Accounts {
@@ -30,14 +39,14 @@ func cmdList(home string, _ []string) error {
 	sort.Strings(names)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tGH USER\tGIT EMAIL\tGIT DIR\tACTIVE")
+	fmt.Fprintln(w, "NAME\tHOST\tGH USER\tGIT EMAIL\tGIT DIR\tACTIVE")
 	for _, n := range names {
 		a := reg.Accounts[n]
 		active := ""
-		if activeUser != "" && a.GHUsername == activeUser {
+		if activeUser := activeByHost[a.Host()]; activeUser != "" && a.GHUsername == activeUser {
 			active = "*"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", n, a.GHUsername, a.GitEmail, a.GitDir, active)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", n, a.Host(), a.GHUsername, a.GitEmail, a.GitDir, active)
 	}
 	return w.Flush()
 }

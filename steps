@@ -1,0 +1,37 @@
+1. Generate a separate SSH key per account (if not already done):
+ssh-keygen -t ed25519 -C "your-email@example.com" -f ~/.ssh/<key-name>
+Each account gets its own key file (e.g. id_ed25519 for work, personal for personal).
+
+2. Add each key's public key to the matching GitHub account
+pbcopy < ~/.ssh/<key-name>.pub
+Paste it under GitHub → Settings → SSH and GPG keys for the correct account.
+
+3. Create ~/.ssh/config with a host alias per account
+Host github.com
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/id_ed25519
+
+Host github-personal
+  HostName github.com
+  User git
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/personal
+The real host is always github.com; the alias (github-personal) is just a local nickname that tells SSH which key to use.
+
+4. Secure the config file and load the key into the keychain
+chmod 600 ~/.ssh/config
+/usr/bin/ssh-add --apple-use-keychain ~/.ssh/personal
+Note: use /usr/bin/ssh-add explicitly — if Homebrew's OpenSSH shadows the Apple one, --apple-use-keychain will fail with "unknown option".
+
+5. Test each identity
+ssh -T git@github.com          # tests default/work key
+ssh -T git@github-personal     # tests the aliased key
+A successful response looks like:
+Hi <username>! You've successfully authenticated, but GitHub does not provide shell access.
+(That message is expected — it means auth worked, not an error.)
+
+6. Use the alias instead of github.com when cloning/setting remotes for that account's repos
+git clone git@github-personal:username/repo.git
+git remote set-url origin git@github-personal:username/repo.git
